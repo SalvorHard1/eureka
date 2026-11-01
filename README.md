@@ -11,9 +11,11 @@ Eurêka est une application web (installable sur téléphone) pour enrichir sa c
 - **Quiz** après chaque leçon, avec l’explication de chaque réponse.
 - **Révision espacée** (système de Leitner) : les questions reviennent après 1, 3, 7, 14, 30 puis 60 jours ; une erreur renvoie la question au début.
 - **Motivation** : objectif quotidien, série de jours (streak), widgets sur l’accueil, XP, niveaux et 19 badges.
-- **Hors ligne** et **installable** (PWA) une fois publiée en HTTPS.
+- **Installable sur l’écran d’accueil** (Android, iPhone, ordinateur) : bouton « Installer » sur l’accueil et dans le profil. Sur Android, la fenêtre d’installation du navigateur s’ouvre directement ; sur iPhone, l’app guide pas à pas (Partager → Sur l’écran d’accueil). Fonctionne **hors ligne** une fois publiée en HTTPS.
 
-La progression est enregistrée dans le navigateur (`localStorage`), sans compte ni serveur.
+- **Progression sauvegardée sur l’appareil** : barre de progression globale (accueil), par thème (page du thème et profil) et dans chaque leçon. Une leçon interrompue reprend à la même carte, même après avoir fermé l’app. Les boutons « 1 · 2 · 5 min » et la leçon du jour ne proposent jamais une leçon déjà terminée tant qu’il en reste de nouvelles.
+
+La progression est enregistrée dans le navigateur (`localStorage`), sans compte ni serveur. Elle est propre à chaque appareil et à chaque navigateur. Sur iPhone, Safari peut effacer les données d’un site non visité pendant plusieurs semaines : installer l’app sur l’écran d’accueil évite ce problème.
 
 ## Lancer en local (Windows)
 

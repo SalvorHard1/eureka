@@ -151,16 +151,104 @@
   }
   const plural = (n, w) => n + ' ' + w + (n > 1 ? 's' : '');
   const themeStyle = t => `style="--c:${t.color}"`;
+  // Parmi des leçons déjà faites, celle terminée il y a le plus longtemps.
+  const leastRecent = list => list.slice().sort((a, b) => ((S.done[a.id] || {}).at || 0) - ((S.done[b.id] || {}).at || 0))[0];
   function lessonOfTheDay() {
     const pool = ALL_LESSONS.filter(l => !S.done[l.id]);
-    const list = pool.length ? pool : ALL_LESSONS;
+    if (!pool.length) return leastRecent(ALL_LESSONS);
     let h = 0;
     for (const ch of today()) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
-    return list[h % list.length];
+    return pool[h % pool.length];
   }
   function nextLessonInTheme(lesson) {
     const t = THEME_OF[lesson.id];
     return t.lessons.find(l => !S.done[l.id] && l.id !== lesson.id) || null;
+  }
+  // Leçon en cours de lecture, pour la reprendre à la même carte (même après fermeture de l'app).
+  function saveResume() {
+    if (!session || session.type !== 'lesson') return;
+    S.resume = { id: session.lesson.id, card: session.card, stage: session.stage === 'cards' ? 'cards' : 'end' };
+    save();
+  }
+  const resumeLesson = () => (S.resume && LESSONS[S.resume.id] ? S.resume : null);
+  const overallProgress = () => Math.round(nDone() / ALL_LESSONS.length * 100);
+
+  /* ---------- Installation sur l'écran d'accueil ---------- */
+  // Android et ordinateur (Chrome, Edge, Samsung Internet) : le navigateur fournit l'événement
+  // beforeinstallprompt, qu'on garde pour ouvrir la vraie fenêtre d'installation.
+  // iPhone et iPad : aucune API, on affiche la marche à suivre (Partager → Sur l'écran d'accueil).
+  let installPrompt = null;
+  const isStandalone = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+  function devicePlatform() {
+    const ua = navigator.userAgent;
+    if (/iPad|iPhone|iPod/.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)) return 'ios';
+    if (/Android/i.test(ua)) return 'android';
+    return 'desktop';
+  }
+  const canOfferInstall = () => !isStandalone() && (!!installPrompt || devicePlatform() !== 'desktop');
+
+  window.addEventListener('beforeinstallprompt', e => {
+    e.preventDefault();
+    installPrompt = e;
+    if (view.name === 'home' || view.name === 'profile') render();
+  });
+  window.addEventListener('appinstalled', () => {
+    installPrompt = null;
+    S.installDismissed = true;
+    save();
+    closeSheet();
+    toast('📲 Eurêka est sur ton écran d’accueil !');
+    if (view.name === 'home' || view.name === 'profile') render();
+  });
+
+  const SHARE_ICON = '<svg class="share-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-label="Partager"><path d="M12 3v12M7 8l5-5 5 5"/><path d="M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-7"/></svg>';
+  const INSTALL_HELP = {
+    ios: {
+      title: 'Installer sur iPhone ou iPad',
+      steps: [
+        'Ouvre Eurêka dans **Safari** (ou une version récente de Chrome ou Edge).',
+        `Touche le bouton **Partager** ${SHARE_ICON}, en bas de l’écran sur iPhone, en haut sur iPad.`,
+        'Fais défiler la liste et choisis **Sur l’écran d’accueil**.',
+        'Touche **Ajouter** : l’icône Eurêka apparaît avec tes autres applis.'
+      ]
+    },
+    android: {
+      title: 'Installer sur Android',
+      steps: [
+        'Ouvre Eurêka dans **Chrome** (ou Samsung Internet, Edge…).',
+        'Touche le menu **⋮** en haut à droite (≡ en bas dans Samsung Internet).',
+        'Choisis **Installer l’application** ou **Ajouter à l’écran d’accueil**.',
+        'Confirme : l’icône Eurêka apparaît avec tes autres applis.'
+      ]
+    },
+    desktop: {
+      title: 'Installer Eurêka',
+      steps: [
+        'Sur ordinateur, dans **Chrome** ou **Edge**, clique sur l’icône d’installation à droite de la barre d’adresse.',
+        'Sur téléphone, ouvre cette page dans le navigateur, puis suis les étapes iPhone ou Android proposées par l’app.'
+      ]
+    }
+  };
+
+  function closeSheet() {
+    const el = document.querySelector('.sheet-backdrop');
+    if (el) el.remove();
+  }
+  function showInstallHelp() {
+    closeSheet();
+    const help = INSTALL_HELP[devicePlatform()];
+    const el = document.createElement('div');
+    el.className = 'sheet-backdrop';
+    el.dataset.a = 'closeSheet';
+    el.innerHTML = `<div class="sheet" data-a="noop" role="dialog" aria-modal="true" aria-labelledby="sheet-title">
+      <div class="sheet-head"><img src="icons/apple-touch-icon.png" alt=""><h2 id="sheet-title">${help.title}</h2></div>
+      <p class="muted">L’app s’ouvrira en plein écran, comme une vraie application, et fonctionnera même hors connexion.</p>
+      <ol class="steps">${help.steps.map(s => `<li><span>${md(s)}</span></li>`).join('')}</ol>
+      ${window.isSecureContext ? '' : '<p class="muted small">L’installation n’est possible qu’une fois l’app publiée en HTTPS (par exemple sur GitHub Pages).</p>'}
+      <button class="btn primary big" data-a="closeSheet">J’ai compris</button>
+    </div>`;
+    frenchSpacing(el);
+    document.body.appendChild(el);
   }
 
   /* ---------- Navigation ---------- */
@@ -207,13 +295,17 @@
         <span class="pill xp" title="XP total">⭐ ${S.xp}</span>
       </div></header>`;
   }
-  function lessonRow(l) {
-    const d = S.done[l.id], t = THEME_OF[l.id];
-    return `<button class="lesson-row" data-a="lesson" data-v="${l.id}" ${themeStyle(t)}>
+  function lessonRow(l, isNext) {
+    const d = S.done[l.id], t = THEME_OF[l.id], r = resumeLesson();
+    const state = d ? `<span class="done">✓ ${d.score}/${d.total}</span>`
+      : r && r.id === l.id ? '<span class="next">En cours</span>'
+      : isNext ? '<span class="next">À suivre</span>'
+      : '<span class="new">Nouveau</span>';
+    return `<button class="lesson-row ${d ? 'is-done' : ''}" data-a="lesson" data-v="${l.id}" ${themeStyle(t)}>
       <span class="dur">${l.min}<small>min</small></span>
       <span class="lr-body"><span class="lr-title">${esc(l.title)}</span>
         <span class="lr-meta">${l.quiz.length} questions${l.deep ? ' · 🔍 approfondir' : ''}</span></span>
-      <span class="lr-state">${d ? `<span class="done">✓ ${d.score}/${d.total}</span>` : '<span class="new">Nouveau</span>'}</span>
+      <span class="lr-state">${state}</span>
     </button>`;
   }
 
@@ -262,6 +354,31 @@
         </div>
       </div>
 
+      <button class="card overall" data-a="go" data-v="profile">
+        <span class="ov-head"><strong>Ma progression</strong><span class="muted">${nDone()}/${ALL_LESSONS.length} leçons · ${overallProgress()} %</span></span>
+        <span class="bar" role="progressbar" aria-valuenow="${overallProgress()}" aria-valuemin="0" aria-valuemax="100"><i style="width:${overallProgress()}%"></i></span>
+      </button>
+
+      ${(() => {
+        const r = resumeLesson();
+        if (!r) return '';
+        const l = LESSONS[r.id], t = THEME_OF[r.id];
+        const pct = r.stage === 'end' ? 100 : Math.round((r.card + 1) / (l.cards.length + 1) * 100);
+        return `<button class="card lod resume-card" data-a="lesson" data-v="${l.id}" ${themeStyle(t)}>
+          <span class="lod-emoji">${t.emoji}</span>
+          <span class="lod-body"><span class="tag">Reprendre · ${r.stage === 'end' ? 'quiz à faire' : `carte ${r.card + 1}/${l.cards.length}`}</span><strong>${esc(l.title)}</strong>
+            <span class="mini-bar"><i style="width:${pct}%"></i></span></span>
+          <span class="chev">›</span>
+        </button>`;
+      })()}
+
+      ${canOfferInstall() && !S.installDismissed ? `<div class="card install-card">
+        <img src="icons/apple-touch-icon.png" alt="">
+        <span class="ib-text"><strong>Installe Eurêka</strong><span class="muted">Sur ton écran d’accueil, en un geste.</span></span>
+        <button class="btn primary" data-a="install">Installer</button>
+        <button class="ib-close" data-a="dismissInstall" aria-label="Masquer">✕</button>
+      </div>` : ''}
+
       <h2 class="h2">J’ai quelques minutes…</h2>
       <div class="quick">
         ${[1, 2, 5].map(m => `<button class="quick-btn" data-a="quick" data-v="${m}"><b>${m}</b><span>min</span></button>`).join('')}
@@ -309,9 +426,15 @@
         <span class="th-emoji">${t.emoji}</span>
         <h1>${t.name}</h1><p>${esc(t.d)}</p>
         <span class="th-progress">${done}/${t.lessons.length} leçons terminées</span>
+        <div class="th-bar" role="progressbar" aria-valuenow="${done}" aria-valuemin="0" aria-valuemax="${t.lessons.length}"><i style="width:${done / t.lessons.length * 100}%"></i></div>
       </div>
       <div class="chips">${[0, 1, 2, 5].map(m => `<button class="chip ${f === m ? 'sel' : ''}" data-a="filter" data-v="${m}">${m ? m + ' min' : 'Toutes'}</button>`).join('')}</div>
-      <div class="lesson-list">${list.length ? list.map(lessonRow).join('') : '<p class="empty">Pas encore de leçon de cette durée dans ce thème.</p>'}</div>
+      <div class="lesson-list">${list.length ? (() => {
+        // Leçons à faire d'abord, leçons terminées ensuite : on ne retombe pas sur ce qu'on a déjà vu.
+        const todo = list.filter(l => !S.done[l.id]), finished = list.filter(l => S.done[l.id]);
+        return todo.map((l, i) => lessonRow(l, i === 0)).join('')
+          + (finished.length ? `<h3 class="list-sub">Terminées (${finished.length})</h3>` + finished.map(l => lessonRow(l)).join('') : '');
+      })() : '<p class="empty">Pas encore de leçon de cette durée dans ce thème.</p>'}</div>
     </main>${nav('themes')}`;
   }
 
@@ -491,6 +614,14 @@
         <div class="calendar">${cal}</div>
         <div class="legend"><span class="cell l0"></span>rien <span class="cell l1"></span>un peu <span class="cell l3"></span>objectif atteint</div>
       </div>
+      <h2 class="h2">Progression par thème <span class="muted">${overallProgress()} %</span></h2>
+      <div class="card theme-progress">${THEMES.map(t => {
+        const d = t.lessons.filter(l => S.done[l.id]).length;
+        return `<button class="tp-row" data-a="theme" data-v="${t.id}" ${themeStyle(t)}>
+          <span>${t.emoji}</span><span class="tp-name">${t.name}</span>
+          <span class="tp-bar"><i style="width:${d / t.lessons.length * 100}%"></i></span>
+          <span class="tp-n">${d}/${t.lessons.length}</span></button>`;
+      }).join('')}</div>
       <h2 class="h2">Badges <span class="muted">${unlocked}/${BADGES.length}</span></h2>
       <div class="badge-grid">${BADGES.map(b => badgeTile(b, !!S.badges[b.id])).join('')}</div>
       <h2 class="h2">Réglages</h2>
@@ -498,6 +629,10 @@
         <label class="field"><span>Prénom</span><input id="pname" maxlength="24" value="${esc(S.name)}" placeholder="Ton prénom"></label>
         <span class="field-label">Objectif quotidien</span>
         <div class="chips">${GOALS.map(g => `<button class="chip ${S.goal === g.xp ? 'sel' : ''}" data-a="changeGoal" data-v="${g.xp}">${g.label} · ${g.xp} XP</button>`).join('')}</div>
+        <span class="field-label">Application</span>
+        ${isStandalone()
+          ? '<p class="installed">✅ Eurêka est installée sur cet appareil.</p>'
+          : '<button class="btn soft install-btn" data-a="install">📲 Installer sur l’écran d’accueil</button>'}
         <button class="btn danger-ghost" data-a="reset">Réinitialiser ma progression</button>
       </div>
       <p class="muted small center">Ta progression est enregistrée sur cet appareil.</p>
@@ -536,7 +671,14 @@
 
   /* ---------- Sessions ---------- */
   function startLesson(id) {
-    session = { type: 'lesson', lesson: LESSONS[id], card: 0, stage: 'cards' };
+    const lesson = LESSONS[id], r = resumeLesson();
+    const resume = r && r.id === id ? r : null;
+    session = {
+      type: 'lesson', lesson,
+      card: resume ? Math.min(resume.card, lesson.cards.length - 1) : 0,
+      stage: resume ? resume.stage : 'cards'
+    };
+    saveResume();
     go('lesson');
   }
   function buildQuestions(list) {
@@ -563,7 +705,8 @@
       xp = (first ? XP.lesson : Math.round(XP.lesson / 2)) + s.correct * XP.correct;
       if (s.correct === total) { xp += XP.perfect; S.stats.perfect++; }
       const prev = S.done[s.lesson.id];
-      S.done[s.lesson.id] = { score: Math.max(s.correct, prev ? prev.score : 0), total, date: today() };
+      S.done[s.lesson.id] = { score: Math.max(s.correct, prev ? prev.score : 0), total, date: today(), at: Date.now() };
+      if (S.resume && S.resume.id === s.lesson.id) delete S.resume;
     } else {
       xp = s.correct * XP.review;
     }
@@ -585,17 +728,22 @@
     quick: v => {
       const m = +v;
       const pool = ALL_LESSONS.filter(l => l.min === m);
-      const fresh = pool.filter(l => !S.done[l.id]);
-      const pick = shuffle(fresh.length ? fresh : pool)[0];
-      if (pick) startLesson(pick.id);
+      if (!pool.length) return;
+      // Toujours une leçon jamais terminée (la carte « Reprendre » sert à continuer celle en cours).
+      const r = resumeLesson();
+      const fresh = pool.filter(l => !S.done[l.id] && !(r && r.id === l.id));
+      if (fresh.length) return startLesson(shuffle(fresh)[0].id);
+      toast(`🎉 Tu as fait toutes les leçons de ${m} min ! Voici la plus ancienne, pour réviser.`);
+      startLesson(leastRecent(pool).id);
     },
     nextCard: () => {
       if (session.card < session.lesson.cards.length - 1) session.card++;
       else session.stage = 'end';
+      saveResume();
       render();
     },
-    prevCard: () => { if (session.card > 0) { session.card--; render(); } },
-    restartCards: () => { session.card = 0; session.stage = 'cards'; render(); },
+    prevCard: () => { if (session.card > 0) { session.card--; saveResume(); render(); } },
+    restartCards: () => { session.card = 0; session.stage = 'cards'; saveResume(); render(); },
     deep: () => {
       const l = session.lesson;
       if (!S.deep[l.id]) {
@@ -628,7 +776,10 @@
       else finishQuiz();
     },
     quit: () => {
-      if (confirm('Quitter ? Ta progression sur cette leçon ne sera pas enregistrée.')) {
+      const msg = session.type === 'lesson' ? 'Quitter ? Tu pourras reprendre cette leçon là où tu en étais.'
+        : session.mode === 'review' ? 'Quitter la révision ? Les réponses déjà données sont enregistrées.'
+        : 'Quitter le quiz ? Tu pourras le recommencer depuis la leçon.';
+      if (confirm(msg)) {
         const back = session && session.lesson && session.mode !== 'review' ? THEME_OF[session.lesson.id].id : null;
         session = null;
         back ? go('theme', { id: back, filter: 0 }) : go('home');
@@ -644,6 +795,18 @@
     setGoal: v => { S.goal = +v; render(); },
     onboardDone: () => { S.onboarded = true; save(); go('home'); },
     changeGoal: v => { S.goal = +v; save(); render(); },
+    install: async () => {
+      if (!installPrompt) return showInstallHelp();
+      const prompt = installPrompt;
+      installPrompt = null; // l'événement ne peut servir qu'une fois
+      prompt.prompt();
+      const { outcome } = await prompt.userChoice;
+      if (outcome === 'accepted') { S.installDismissed = true; save(); }
+      render();
+    },
+    dismissInstall: () => { S.installDismissed = true; save(); render(); },
+    closeSheet: () => closeSheet(),
+    noop: () => { },
     reset: () => {
       if (confirm('Effacer toute ta progression (XP, série, badges, révisions) ? Cette action est définitive.')) {
         S = freshState(); save(); go('onboarding', { step: 1 });
@@ -673,6 +836,7 @@
   });
 
   document.addEventListener('keydown', e => {
+    if (e.key === 'Escape' && document.querySelector('.sheet-backdrop')) return closeSheet();
     if (view.name === 'quiz' && session) {
       const k = e.key.toUpperCase();
       if (session.answered === null && k.length === 1 && 'ABCD1234'.includes(k)) {
@@ -697,6 +861,9 @@
   }, { passive: true });
 
   render();
+
+  // Demande au navigateur de ne pas effacer les données locales (progression) en cas de manque de place.
+  if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => { });
 
   if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
     navigator.serviceWorker.register('sw.js').catch(() => { });
